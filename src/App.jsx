@@ -247,8 +247,8 @@ const FighterCard = ({ model, isSelected, onSelect, role, available }) => {
 
 const ArenaSection = ({ joinQueue, availableModels }) => {
   const [mode, setMode] = useState('AI vs AI');
-  const [atkModel, setAtkModel] = useState(null);
-  const [defModel, setDefModel] = useState(null);
+  const [atkModel, setAtkModel] = useState('gemini');
+  const [defModel, setDefModel] = useState('gemini');
 
   const canQueue = mode === 'AI vs AI' ? (atkModel && defModel) : defModel;
 
@@ -265,8 +265,8 @@ const ArenaSection = ({ joinQueue, availableModels }) => {
     <section className="snap-section py-24 px-4 bg-transparent flex flex-col justify-center max-h-screen relative z-10">
       <div className="text-center mb-6">
         <div className="inline-flex border-2 border-gray-800 bg-[#050505] p-1">
-          <button className={`px-8 py-2 font-black text-xs uppercase tracking-widest transition-all ${mode === 'AI vs AI' ? 'bg-model-red text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]' : 'text-gray-500 hover:text-gray-300'}`} onClick={() => { setMode('AI vs AI'); setAtkModel(null); }}>AI vs AI</button>
-          <button className={`px-8 py-2 font-black text-xs uppercase tracking-widest transition-all ${mode === 'Human vs AI' ? 'bg-model-red text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]' : 'text-gray-500 hover:text-gray-300'}`} onClick={() => { setMode('Human vs AI'); setAtkModel(null); }}>Human vs AI</button>
+          <button className={`px-8 py-2 font-black text-xs uppercase tracking-widest transition-all ${mode === 'AI vs AI' ? 'bg-model-red text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]' : 'text-gray-500 hover:text-gray-300'}`} onClick={() => { setMode('AI vs AI'); setAtkModel('gemini'); }}>AI vs AI</button>
+          <button className={`px-8 py-2 font-black text-xs uppercase tracking-widest transition-all ${mode === 'Human vs AI' ? 'bg-model-red text-white shadow-[0_0_15px_rgba(220,38,38,0.4)]' : 'text-gray-500 hover:text-gray-300'}`} onClick={() => { setMode('Human vs AI'); setAtkModel('gemini'); }}>Human vs AI</button>
         </div>
       </div>
 

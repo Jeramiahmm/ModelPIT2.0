@@ -636,12 +636,10 @@ async def scoreboard_defenders():
 
 @app.get("/api/demo/trigger")
 async def demo_trigger():
-    """Instantly start a Claude vs ChatGPT battle without the frontend."""
-    if not MODEL_REGISTRY["claude"]["has_key"]:
-        raise HTTPException(400, "Claude API key not configured")
-    if not MODEL_REGISTRY["chatgpt"]["has_key"]:
-        raise HTTPException(400, "ChatGPT API key not configured")
-    entry = battle_runner.add_to_queue("claude", "chatgpt", "AI vs AI")
+    """Instantly start a Gemini vs Gemini battle without the frontend."""
+    if not MODEL_REGISTRY["gemini"]["has_key"]:
+        raise HTTPException(400, "Gemini API key not configured")
+    entry = battle_runner.add_to_queue("gemini", "gemini", "AI vs AI")
     await ws_manager.broadcast({"type": "queue_update", "queue": battle_runner.get_queue_state()})
     await battle_runner.try_start_next()
     return {"status": "battle_queued", "position": entry["pos"], "queueId": entry["id"]}
