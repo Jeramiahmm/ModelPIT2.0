@@ -714,7 +714,7 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState([]);
   const [queueState, setQueueState] = useState({ entries: [], myPosition: null });
   const [battleState, setBattleState] = useState({
-    isActive: false, attackerModel: 'claude', defenderModel: 'chatgpt', secretWord: '???',
+    isActive: false, attackerModel: 'gemini', defenderModel: 'gemini', secretWord: '???',
     messages: [], attackerResourcesRemaining: 100, maxResources: 100, mode: 'AI vs AI', winner: null
   });
 
