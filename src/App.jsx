@@ -55,9 +55,8 @@ async function apiGetInsights() { return (await fetch(`${API_BASE}/insights`)).j
 function connectWebSocket(onMessage) {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${window.location.host}/ws`);
-  ws.onmessage = (e) => onMessage(JSON.parse(e.data));
-  ws.onclose = () => setTimeout(() => connectWebSocket(onMessage), 2000);
-  // Keepalive ping every 30s
+  ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch(err) { console.error('WS parse error:', err); } };
+  ws.onerror = (e) => console.error('WS error:', e);
   const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping' })); }, 30000);
   ws.onclose = () => { clearInterval(ping); setTimeout(() => connectWebSocket(onMessage), 2000); };
   return ws;
@@ -809,7 +808,19 @@ export default function App() {
   const [authState, setAuthState] = useState(() => {
     const token = localStorage.getItem('pit_token');
     const username = localStorage.getItem('pit_username');
-    return token && username ? { isLoggedIn: true, username } : { isLoggedIn: false, username: null };
+    if (token && username) {
+      // Quick JWT expiry check (base64 decode payload, check exp)
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp && payload.exp < Date.now() / 1000) {
+          localStorage.removeItem('pit_token');
+          localStorage.removeItem('pit_username');
+          return { isLoggedIn: false, username: null };
+        }
+      } catch(e) { /* malformed token — clear it */ localStorage.removeItem('pit_token'); localStorage.removeItem('pit_username'); return { isLoggedIn: false, username: null }; }
+      return { isLoggedIn: true, username };
+    }
+    return { isLoggedIn: false, username: null };
   });
   const [isLoginOpen, setIsLoginOpen] = useState(false);
 
@@ -849,8 +860,11 @@ export default function App() {
           }));
           break;
         case 'battle_end':
-          setBattleState(prev => ({ ...prev, winner: msg.winner, isActive: false }));
-          // Refresh scoreboard
+          setBattleState(prev => ({
+            ...prev, winner: msg.winner, isActive: false,
+            attackerResourcesRemaining: msg.attackerResourcesRemaining ?? prev.attackerResourcesRemaining,
+          }));
+          // Refresh scoreboard after battle
           apiGetScoreboard().then(s => setScoreboardState(s)).catch(() => {});
           break;
         case 'queue_update':
@@ -891,13 +905,19 @@ export default function App() {
     scrollTo(2);
   };
 
+  const [soundMuted, setSoundMuted] = useState(false);
+  const handleToggleSound = () => {
+    const muted = soundManager.toggle();
+    setSoundMuted(muted);
+  };
+
   const demoWin = () => setBattleState(prev => ({ ...prev, winner: 'attacker' }));
   const demoLose = () => setBattleState(prev => ({ ...prev, attackerResourcesRemaining: 0, winner: 'defender' }));
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-[#0a0a0a] text-gray-100 flex flex-col font-sans selection:bg-model-red/30 selection:text-white relative">
       <EmberParticles /> {/* GLOBAL PARTICLES NOW */}
-      <Navbar authState={authState} openLogin={() => setIsLoginOpen(true)} scrollTo={scrollTo} queueState={queueState} />
+      <Navbar authState={authState} openLogin={() => setIsLoginOpen(true)} scrollTo={scrollTo} queueState={queueState} soundMuted={soundMuted} onToggleSound={handleToggleSound} />
       <DotNavigation activeSection={activeSection} scrollTo={scrollTo} />
       
       <main ref={containerRef} className="snap-container flex-1 mt-16 relative z-10">
