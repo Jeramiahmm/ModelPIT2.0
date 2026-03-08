@@ -5,20 +5,62 @@ import confetti from 'canvas-confetti';
 import { ClaudeSVG, ChatGPTSVG, GeminiSVG, DeepSeekSVG, OllamaSVG, KimiSVG, HumanSVG } from './ModelLogos';
 
 // ============================================
-// BACKEND API INTEGRATION POINTS (MOCK)
+// BACKEND API INTEGRATION
 // ============================================
 
+const API_BASE = '/api';
+
+function getAuthHeaders() {
+  const token = localStorage.getItem('pit_token');
+  return token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+}
+
 async function apiLogin(email, password) {
-  return new Promise(resolve => setTimeout(() => resolve({ username: email.split('@')[0], email }), 500));
+  const res = await fetch(`${API_BASE}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+  if (!res.ok) throw new Error('Invalid credentials');
+  const data = await res.json();
+  localStorage.setItem('pit_token', data.token);
+  return data;
 }
+
 async function apiSignUp(username, email, password) {
-  return new Promise(resolve => setTimeout(() => resolve({ username, email }), 1000));
+  const res = await fetch(`${API_BASE}/auth/signup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, email, password }) });
+  if (!res.ok) throw new Error('Signup failed');
+  const data = await res.json();
+  localStorage.setItem('pit_token', data.token);
+  return data;
 }
+
 async function apiJoinQueue(atk, def, mode) {
-  return new Promise(resolve => setTimeout(() => resolve(true), 500));
+  const res = await fetch(`${API_BASE}/queue/join`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ attacker: atk, defender: def, mode }) });
+  if (!res.ok) throw new Error('Failed to join queue');
+  return await res.json();
 }
+
 async function apiSendMessage(battleId, message) {
-  return new Promise(resolve => setTimeout(() => resolve(true), 300));
+  const res = await fetch(`${API_BASE}/battles/${battleId}/message`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ message }) });
+  return res.ok;
+}
+
+async function apiGetScoreboard() {
+  const [atkRes, defRes] = await Promise.all([
+    fetch(`${API_BASE}/scoreboard/attackers`), fetch(`${API_BASE}/scoreboard/defenders`)
+  ]);
+  return { attackers: await atkRes.json(), defenders: await defRes.json() };
+}
+
+async function apiGetElo() { return (await fetch(`${API_BASE}/elo`)).json(); }
+async function apiGetInsights() { return (await fetch(`${API_BASE}/insights`)).json(); }
+
+function connectWebSocket(onMessage) {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${window.location.host}/ws`);
+  ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(() => connectWebSocket(onMessage), 2000);
+  // Keepalive ping every 30s
+  const ping = setInterval(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping' })); }, 30000);
+  ws.onclose = () => { clearInterval(ping); setTimeout(() => connectWebSocket(onMessage), 2000); };
+  return ws;
 }
 
 // ============================================
@@ -351,7 +393,7 @@ const LiveBattleSection = ({ battleState, authState, onVictoryDemo, onDefeatDemo
 
   const handleSend = () => {
     if (!humanInput.trim()) return;
-    apiSendMessage(1, humanInput);
+    apiSendMessage(battleState.id || 1, humanInput);
     setHumanInput('');
     triggerClashAnimation();
   };
@@ -655,7 +697,7 @@ const AuthModal = ({ isOpen, onClose, onLogin }) => {
           <button className={`font-black tracking-widest text-sm transition-colors ${tab === 'login' ? 'text-white border-b-2 border-model-red pb-3 -mb-[14px]' : 'text-gray-600 hover:text-gray-400'}`} onClick={() => setTab('login')}>LOG IN</button>
           <button className={`font-black tracking-widest text-sm transition-colors ${tab === 'signup' ? 'text-white border-b-2 border-model-red pb-3 -mb-[14px]' : 'text-gray-600 hover:text-gray-400'}`} onClick={() => setTab('signup')}>SIGN UP</button>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); onLogin(tab === 'login' ? email : username, password); }} className="space-y-5">
+        <form onSubmit={async (e) => { e.preventDefault(); try { const data = tab === 'login' ? await apiLogin(email, password) : await apiSignUp(username, email, password); onLogin(data.username); } catch(err) { alert(err.message); } }} className="space-y-5">
           {tab === 'signup' && (
             <div>
               <label className="block text-[10px] uppercase tracking-[0.2em] text-gray-500 font-bold mb-2">Fighter Handle</label>
@@ -764,19 +806,65 @@ export default function App() {
   const [activeSection, setActiveSection] = useState(0);
   const containerRef = useRef(null);
 
-  const [authState, setAuthState] = useState({ isLoggedIn: false, username: null });
+  const [authState, setAuthState] = useState(() => {
+    const token = localStorage.getItem('pit_token');
+    const username = localStorage.getItem('pit_username');
+    return token && username ? { isLoggedIn: true, username } : { isLoggedIn: false, username: null };
+  });
   const [isLoginOpen, setIsLoginOpen] = useState(false);
-  
+
   const [queueState, setQueueState] = useState({ entries: INITIAL_QUEUE, myPosition: null });
   const [battleState, setBattleState] = useState({
-    isActive: true, attackerModel: 'claude', defenderModel: 'chatgpt', secretWord: 'OBLIVION',
+    isActive: false, attackerModel: 'claude', defenderModel: 'chatgpt', secretWord: '???',
     messages: INITIAL_BATTLE_MESSAGES, attackerResourcesRemaining: 100, mode: 'AI vs AI', winner: null
   });
-  
-  const [scoreboardState] = useState({
+
+  const [scoreboardState, setScoreboardState] = useState({
     attackers: MOCK_ATTACKERS_SCORE,
     defenders: MOCK_DEFENDERS_SCORE,
   });
+
+  // WebSocket connection for live battle updates
+  useEffect(() => {
+    const ws = connectWebSocket((msg) => {
+      switch (msg.type) {
+        case 'init':
+          if (msg.currentBattle) {
+            setBattleState(prev => ({ ...prev, ...msg.currentBattle }));
+          }
+          if (msg.queue) setQueueState(prev => ({ ...prev, entries: msg.queue }));
+          break;
+        case 'battle_start':
+          setBattleState({
+            isActive: true, attackerModel: msg.battle.attackerModel, defenderModel: msg.battle.defenderModel,
+            secretWord: msg.battle.secretWord, mode: msg.battle.mode, messages: [],
+            attackerResourcesRemaining: msg.battle.attackerResourcesRemaining, winner: null, id: msg.battle.id,
+          });
+          break;
+        case 'battle_message':
+          setBattleState(prev => ({
+            ...prev,
+            messages: [...prev.messages, msg.message],
+            attackerResourcesRemaining: msg.attackerResourcesRemaining,
+          }));
+          break;
+        case 'battle_end':
+          setBattleState(prev => ({ ...prev, winner: msg.winner, isActive: false }));
+          // Refresh scoreboard
+          apiGetScoreboard().then(s => setScoreboardState(s)).catch(() => {});
+          break;
+        case 'queue_update':
+          setQueueState(prev => ({ ...prev, entries: msg.queue }));
+          break;
+      }
+    });
+    return () => ws.close();
+  }, []);
+
+  // Fetch scoreboard on mount
+  useEffect(() => {
+    apiGetScoreboard().then(s => { if (s.attackers.length || s.defenders.length) setScoreboardState(s); }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -790,17 +878,6 @@ export default function App() {
     return () => el && el.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Demo health drain interval
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setBattleState(prev => {
-        if(prev.attackerResourcesRemaining <= 0 || prev.winner) return prev;
-        return { ...prev, attackerResourcesRemaining: Math.max(0, prev.attackerResourcesRemaining - 3) };
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, []);
-
   const scrollTo = (index) => {
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: index * window.innerHeight, behavior: 'smooth' });
@@ -808,8 +885,10 @@ export default function App() {
   };
 
   const handleJoinQueue = (atk, def, mode) => {
-    setQueueState(prev => ({ ...prev, myPosition: prev.entries.length + 1 }));
-    scrollTo(2); // Jump to live battle now since queue is gone
+    apiJoinQueue(atk, def, mode).then(res => {
+      setQueueState(prev => ({ ...prev, myPosition: res.position }));
+    }).catch(console.error);
+    scrollTo(2);
   };
 
   const demoWin = () => setBattleState(prev => ({ ...prev, winner: 'attacker' }));
@@ -829,7 +908,7 @@ export default function App() {
         <ScoreboardSection scoreboardState={scoreboardState} />
       </main>
 
-      <AuthModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} onLogin={(u) => { setAuthState({ isLoggedIn: true, username: u }); setIsLoginOpen(false); }} />
+      <AuthModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} onLogin={(u) => { localStorage.setItem('pit_username', u); setAuthState({ isLoggedIn: true, username: u }); setIsLoginOpen(false); }} />
       <VictoryScreen winner={battleState.winner} battleState={battleState} onClose={() => setBattleState(prev => ({...prev, winner: null}))} />
     </div>
   );
